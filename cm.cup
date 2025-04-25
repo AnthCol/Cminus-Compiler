@@ -1,0 +1,448 @@
+import absyn.*; 
+
+parser code {:
+
+    private static boolean has_error = false; 
+
+    public void report_error(String message, Object info)
+    {
+        has_error = true; 
+
+        StringBuffer m = new StringBuffer("Error"); 
+        if (info instanceof java_cup.runtime.Symbol)
+        {
+            java_cup.runtime.Symbol s = ((java_cup.runtime.Symbol) info); 
+            if (s.left >= 0)
+            {
+                m.append(" in line " + (s.left + 1)); 
+            }
+            if (s.right >= 0)
+            {
+                m.append(", column " + (s.right + 1)); 
+            }
+        }
+
+        m.append(" : " + message); 
+        System.err.println(m); 
+    }
+
+    public void report_fatal_error(String message, Object info)
+    {
+        has_error = true; 
+
+        report_error(message, info); 
+        System.exit(1); 
+    }
+:}; 
+
+/*  Declaration of terminals and non terminals */
+
+terminal BOOL, IF, ELSE, INT, RETURN, VOID, WHILE, PLUS, MINUS, MUL, DIV; 
+terminal LT, LE, GT, GE, EQ, NE, NOT, OR, AND, TESTEQ, ERROR; 
+terminal SEMICOLON, COMMA, LPAREN, RPAREN, LSQUARE, RSQUARE, LCURLY, RCURLY; 
+terminal String ID, NUM, TRUTH;  
+
+
+non terminal NameTy type_specifier; 
+
+non terminal Dec declaration, fun_prototype; 
+
+non terminal FunctionDec fun_declaration; 
+
+non terminal DecList program, declaration_list; 
+
+non terminal Exp expression_stmt, expression, return_stmt, selection_stmt; 
+non terminal Exp iteration_stmt, statement, call, compound_stmt; 
+
+non terminal ExpList statement_list, arg_list, args; 
+
+non terminal Var var; 
+
+non terminal VarDec param, var_declaration; 
+
+non terminal VarDecList params, param_list, local_declarations; 
+
+
+/* Precedence Section */
+
+
+precedence nonassoc AND, OR, LT, GT, LE, GE, NE, TESTEQ; 
+precedence left PLUS, MINUS, DIV, MUL, ELSE, SEMICOLON, ID; 
+
+
+/* Grammar Section */
+
+start with program; 
+
+program             ::= declaration_list:d
+                        {: 
+                            RESULT = d; 
+                        :}
+                    ;
+
+declaration_list    ::= declaration_list:l declaration:d
+                        {: 
+                            DecList list = l; 
+                            while (list.tail != null)
+                                list = list.tail; 
+                            list.tail = new DecList(d, null);  
+                            RESULT = l; 
+                        :}
+                    | declaration:d
+                        {:
+                            RESULT = new DecList(d, null); 
+                        :}
+                    ;
+
+declaration         ::= var_declaration:vd
+                        {:
+                            RESULT = vd; 
+                        :}
+                    | fun_declaration:fd
+                        {:
+                            RESULT = fd; 
+                        :}
+                    | fun_prototype:fp
+                        {:
+                            RESULT = fp; 
+                        :}
+                    ; 
+
+var_declaration     ::= type_specifier:t ID:i SEMICOLON
+                        {:
+                            RESULT = new SimpleDec(tleft, t, i);  
+                        :}
+                    | type_specifier:t ID:i LSQUARE NUM:n RSQUARE SEMICOLON
+                        {:
+                            int val = Integer.parseInt(n); 
+                            RESULT = new ArrayDec(tleft, t, i, val);  
+                        :}
+                    | type_specifier:t ID:i error:e SEMICOLON
+                        {:
+                            parser.report_error("*Variable declaration contains unexpected character(s) on line: " + (tleft + 1) + ", column: " + (eright + 1) + "\n", e);   
+                            RESULT = new SimpleDec(tleft, t, null); 
+                        :}
+                    | type_specifier:t ID:i LSQUARE NUM:n error:e SEMICOLON
+                        {:
+                            parser.report_error("*Array declaration missing right bracket ] on line: " + (tleft + 1) + ", column: " + (eright + 1) + "\n", e);  
+                            RESULT = new SimpleDec(tleft, t, null);  
+                        :}
+                    | type_specifier:t ID:i NUM:n RSQUARE error:e SEMICOLON
+                        {:
+                            parser.report_error("*Array declaration missing left bracket [ on line: " + (tleft + 1) + ", column: " + (eright + 1) + "\n", e); 
+                            RESULT = new SimpleDec(tleft, t, null); 
+                        :}
+                    ; 
+
+type_specifier      ::= BOOL:b
+                        {: 
+                            RESULT = new NameTy(bleft, NameTy.BOOL);
+                        :}
+                    | INT:i
+                        {: 
+                            RESULT = new NameTy(ileft, NameTy.INT); 
+                        :}
+                    | VOID:v
+                        {: 
+                            RESULT = new NameTy(vleft, NameTy.VOID); 
+                        :}
+                    ; 
+
+fun_declaration     ::= type_specifier:t ID:i LPAREN params:p RPAREN compound_stmt:c
+                        {:
+                            RESULT = new FunctionDec(tleft, t, i, p, c);  
+                        :}
+                    | type_specifier:t ID:i LPAREN error:e RPAREN compound_stmt:c
+                        {:
+                            parser.report_error("*Function declaration missing void type between brackets on line: " + (tleft + 1) + ", column: " + (eright + 1) + "\n", e);  
+                            RESULT = new FunctionDec(tleft, t, i, null, c); 
+                        :}
+                    | type_specifier:t ID:i error:e params:p RPAREN compound_stmt:c
+                        {:
+                            parser.report_error("*Function declaration missing left parentheses on line: " + (tleft + 1) + ", column: " + (eright + 1) + "\n", e); 
+                            RESULT = new FunctionDec(tleft, t, null, p, c); 
+                        :}
+                    | type_specifier:t ID:i LPAREN params:p error:e compound_stmt:c
+                        {:
+                            parser.report_error("*Function declaration missing right parentheses on line: " + (tleft + 1) + ", column: " + (eright + 1) + "\n", e);  
+                        :}
+                    ; 
+
+fun_prototype       ::= type_specifier:t ID:i LPAREN params:p RPAREN SEMICOLON
+                        {:
+                            RESULT = new FunctionDec(tleft, t, i, p, new NilExp(tleft)); 
+                        :}
+                    ; 
+
+params              ::= param_list:p
+                        {:
+                            RESULT = p; 
+                        :}
+                    | VOID:v
+                    ; 
+
+param_list          ::= param_list:l COMMA param:p
+                        {:
+                            VarDecList list = l; 
+                            while (list.tail != null)
+                                list = list.tail; 
+                            list.tail = new VarDecList(p, null); 
+                            RESULT = l;  
+                        :}
+                    | param:p
+                        {:
+                            RESULT = new VarDecList(p, null);  
+                        :}
+                    ; 
+
+param               ::= type_specifier:t ID:i
+                        {:
+                            RESULT = new SimpleDec(tleft, t, i); 
+                        :}
+                    | type_specifier:t ID:i LSQUARE RSQUARE
+                        {:
+                            RESULT = new ArrayDec(tleft, t, i, 0);  
+                        :}
+                    ; 
+
+compound_stmt       ::= LCURLY local_declarations:l statement_list:s RCURLY
+                        {:
+                            RESULT = new CompoundExp(lleft, l, s);  
+                        :}
+                    ; 
+
+local_declarations  ::= local_declarations:l var_declaration:v
+                        {:
+                            VarDecList list = l; 
+                            if (list == null)
+                            {
+                                l = new VarDecList(v, null);     
+                            }
+                            else
+                            {
+                                while (list.tail != null)
+                                    list = list.tail; 
+                                list.tail = new VarDecList(v, null); 
+                            }
+                            RESULT = l; 
+                        :}
+                    |
+                        {:
+                            RESULT = null; 
+                        :}
+                    ; 
+
+statement_list      ::= statement_list:l statement:s
+                        {:
+                            ExpList list = l; 
+
+                            if (list == null)
+                            {
+                                l = new ExpList(s, null); 
+                            }
+                            else
+                            {
+                                while (list.tail != null)
+                                    list = list.tail; 
+                                list.tail = new ExpList(s, null);
+                            }
+                            RESULT = l;  
+                        :}
+                    |
+                        {:
+                            RESULT = null;  
+                        :}
+                    ; 
+
+statement           ::= expression_stmt:s
+                        {:
+                            RESULT = s;  
+                        :}
+                    | compound_stmt:s
+                        {:
+                            RESULT = s;  
+                        :}
+                    | selection_stmt:s
+                        {:
+                            RESULT = s;  
+                        :}
+                    | iteration_stmt:s
+                        {:
+                            RESULT = s;  
+                        :}
+                    | return_stmt:s
+                        {:
+                            RESULT = s;  
+                        :}
+                    ; 
+
+expression_stmt     ::= expression:e SEMICOLON 
+                        {:
+                            RESULT = e;  
+                        :}
+                    | SEMICOLON
+                    ; 
+
+selection_stmt      ::= IF:i LPAREN expression:e RPAREN statement:s
+                        {:
+                            RESULT = new IfExp(ileft, e, s, new NilExp(sleft));  
+                        :}
+                    | IF:i LPAREN expression:e RPAREN statement:s1 ELSE statement:s2
+                        {:
+                            RESULT = new IfExp(ileft, e, s1, s2); 
+                        :}
+                    | IF:i LPAREN error:e RPAREN statement:s1 ELSE statement:s2
+                        {:
+                            parser.report_error("*Invalid conditional statement in if statement on line: " + (ileft + 1) + ", column " + (eright + 1) + "\n", e);  
+                            RESULT = new IfExp(ileft, null, s1, s2); 
+                        :}
+                    | IF:i LPAREN expression:e RPAREN statement:s1 ELSE error:err statement:s2
+                        {:
+                            parser.report_error("*Invalid token after else on line: " + (ileft + 1) + ", column " + (errright + 1) + "\n", e); 
+                            RESULT = new IfExp(ileft, e, s1, new NilExp(ileft)); 
+                        :}
+                    ; 
+
+iteration_stmt      ::= WHILE:w LPAREN expression:e RPAREN statement:s
+                        {:
+                            RESULT = new WhileExp(wleft, e, s);  
+                        :}
+                    | WHILE:w LPAREN error:e RPAREN statement:s
+                        {:
+                            parser.report_error("*Invalid conditional statement in loop on line: " + (wleft + 1) + ", column: " + (eright + 1) + "\n", e); 
+                            RESULT = new WhileExp(wleft, null, s); 
+                        :}
+                    ; 
+
+return_stmt         ::= RETURN:r expression:e SEMICOLON
+                        {:
+                            RESULT = new ReturnExp(rleft, e); 
+                        :}
+                    | RETURN:r SEMICOLON
+                        {:
+                            RESULT = new ReturnExp(rleft, new NilExp(rleft)); 
+                        :}
+                    ; 
+
+expression          ::= var:v EQ expression:e
+                        {:
+                            RESULT = new AssignExp(vleft, new VarExp(vleft, v), e);  
+                        :}
+                    | expression:e1 PLUS expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.PLUS, e2); 
+                        :}
+                    | expression:e1 MINUS expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.MINUS, e2); 
+                        :}
+                    | expression:e1 MUL expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.MUL, e2); 
+                        :}
+                    | expression:e1 DIV expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.DIV, e2); 
+                        :}
+                    | expression:e1 TESTEQ expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.TESTEQ, e2); 
+                        :}
+                    | expression:e1 NE expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.NE, e2); 
+                        :}
+                    | expression:e1 GT expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.GT, e2); 
+                        :}
+                    | expression:e1 GE expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.GE, e2); 
+                        :}
+                    | expression:e1 LT expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.LT, e2); 
+                        :}
+                    | expression:e1 LE expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.LE, e2); 
+                        :}
+                    | expression:e1 OR expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.OR, e2); 
+                        :}
+                    | expression:e1 AND expression:e2
+                        {:
+                            RESULT = new OpExp(e1left, e1, OpExp.AND, e2);  
+                        :}
+                    | NOT:n expression:e
+                        {:
+                            RESULT = new OpExp(nleft, new NilExp(nleft), OpExp.NOT, e); 
+                        :}
+                    | MINUS:m expression:e
+                        {:
+                            RESULT = new OpExp(mleft, new NilExp(mleft), OpExp.UMINUS, e);  
+                        :}
+                    | LPAREN expression:e RPAREN
+                        {:
+                            RESULT = e; 
+                        :}
+                    | var:v
+                        {:
+                            RESULT = new VarExp(vleft, v);  
+                        :}
+                    | call:c
+                        {:
+                            RESULT = c; 
+                        :}
+                    | NUM:n
+                        {:
+                            RESULT = new IntExp(nleft, Integer.parseInt(n)); 
+                        :}
+                    | TRUTH:t
+                        {:
+                            RESULT = new BoolExp(tleft, Boolean.parseBoolean(t));  
+                        :}
+                    ; 
+
+var                 ::= ID:i
+                        {:
+                            RESULT = new SimpleVar(ileft, i);  
+                        :}
+                    | ID:i LSQUARE expression:e RSQUARE
+                        {:
+                            RESULT = new IndexVar(ileft, i, e);  
+                        :}
+                    ; 
+
+call                ::= ID:i LPAREN args:a RPAREN
+                        {:
+                            RESULT = new CallExp(ileft, i, a); 
+                        :}
+                    |   ID:i LPAREN RPAREN 
+                        {:
+                            RESULT = new CallExp(ileft, i, null); 
+                        :}
+                    ; 
+
+args                ::= arg_list:a
+                        {:
+                            RESULT = a;  
+                        :}
+                    ; 
+
+arg_list            ::= arg_list:a COMMA expression:e
+                        {:
+                            ExpList list = a; 
+                            while (list.tail != null)
+                                list = list.tail; 
+                            list.tail = new ExpList(e, null); 
+                            RESULT = a; 
+                        :}
+                    | expression:e
+                        {:
+                            RESULT = new ExpList(e, null);  
+                        :}
+                    ; 
+                
