@@ -1,5 +1,6 @@
 import absyn.*; 
 import java.util.*; 
+
 /*
     Class works for both variables and functions.
 */
