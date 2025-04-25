@@ -1,6 +1,8 @@
 Anthony Colaiacovo
 
 
+** code generation incomplete **
+
 [ Build ]
 From the directory that this README file is in, you should be able to type "make" and everything should work.
 
